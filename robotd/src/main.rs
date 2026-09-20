@@ -1077,11 +1077,6 @@ fn run_init(params: &Params, duration: Duration) -> ExitCode {
 }
 
 #[cfg(target_os = "linux")]
-fn open_configured_bus(bus: &params::Bus) -> duck_control::io::Result<duck_control::bus::BusIo> {
-    open_configured_bus_parts(&bus.port, bus.protocol, &bus.feetech_ids)
-}
-
-#[cfg(target_os = "linux")]
 fn open_configured_bus_parts(
     port: &str,
     protocol: BusProtocol,
