@@ -101,7 +101,17 @@ const fn feature(key: &'static str, kind: Kind, doc: &'static str) -> Entry {
 /// Every key, grouped by section, sections in the shipped file's order.
 pub const REGISTRY: &[Entry] = &[
     // ── [bus] ────────────────────────────────────────────────────────────────
-    entry("bus.port", Kind::Text, "Dynamixel serial port device"),
+    entry("bus.port", Kind::Text, "Serial port device"),
+    entry(
+        "bus.protocol",
+        Kind::Choice(&["dynamixel_v2", "feetech_scs"]),
+        "Servo wire protocol; defaults to the original Dynamixel Protocol 2.0",
+    ),
+    entry(
+        "bus.feetech_ids",
+        Kind::IntegerList,
+        "Feetech IDs in joint order; empty uses the built-in Dynamixel joint IDs",
+    ),
     // ── [control] ────────────────────────────────────────────────────────────
     entry("control.hz", Kind::Integer, "Control loop rate"),
     entry(

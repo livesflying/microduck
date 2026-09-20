@@ -13,6 +13,7 @@
 //! at against real hardware. See [`crate::model`].
 
 use std::f64::consts::PI;
+use std::io::{Read, Write};
 use std::time::Duration;
 
 use rustypot::servo::dynamixel::xl330::Xl330Controller;
@@ -593,6 +594,355 @@ impl RobotIo for DynamixelIo {
     }
 }
 
+/// Feetech SCS/STS serial bus.
+///
+/// This is deliberately a separate backend from [`DynamixelIo`]. The two protocols use different
+/// instruction frames, status packets and control tables; sharing a controller and changing one
+/// byte would make a protocol mismatch look like a wiring fault.
+pub struct FeetechIo {
+    serial: Box<dyn serialport::SerialPort>,
+    ids: Vec<u8>,
+}
+
+impl FeetechIo {
+    const READ_TIMEOUT: Duration = Duration::from_millis(30);
+    const POSITION: u8 = 56;
+    const GOAL_POSITION: u8 = 42;
+    const TORQUE_ENABLE: u8 = 40;
+    const PRESENT_VOLTAGE: u8 = 62;
+    const PRESENT_TEMPERATURE: u8 = 63;
+
+    pub fn open(port: &str, ids: &[u8]) -> Result<Self> {
+        let ids = if ids.is_empty() {
+            JOINT_IDS.to_vec()
+        } else {
+            ids.to_vec()
+        };
+        if ids.len() > NUM_JOINTS {
+            return Err(IoError::Bus(format!(
+                "Feetech ID list has {} entries, maximum is {NUM_JOINTS}",
+                ids.len()
+            )));
+        }
+        let mut serial = serialport::new(port, BAUD_RATE)
+            .timeout(Self::READ_TIMEOUT)
+            .open()
+            .map_err(|e| IoError::Port {
+                path: port.to_owned(),
+                source: std::io::Error::other(e),
+            })?;
+        serial
+            .set_baud_rate(BAUD_RATE)
+            .map_err(|e| IoError::Bus(format!("set Feetech baud rate: {e}")))?;
+        serial
+            .write_data_terminal_ready(false)
+            .map_err(|e| IoError::Bus(format!("clear Feetech DTR: {e}")))?;
+        serial
+            .write_request_to_send(false)
+            .map_err(|e| IoError::Bus(format!("clear Feetech RTS: {e}")))?;
+        Ok(Self {
+            serial,
+            ids,
+        })
+    }
+
+    fn checksum(body: &[u8]) -> u8 {
+        (!body.iter().copied().map(u16::from).sum::<u16>()) as u8
+    }
+
+    fn packet(id: u8, instruction: u8, params: &[u8]) -> Vec<u8> {
+        let length = (params.len() + 2) as u8;
+        let mut body = Vec::with_capacity(params.len() + 4);
+        body.extend_from_slice(&[id, length, instruction]);
+        body.extend_from_slice(params);
+        let checksum = Self::checksum(&body);
+        let mut packet = Vec::with_capacity(body.len() + 3);
+        packet.extend_from_slice(&[0xff, 0xff]);
+        packet.extend_from_slice(&body);
+        packet.push(checksum);
+        packet
+    }
+
+    fn transact(&mut self, id: u8, instruction: u8, params: &[u8]) -> Result<Vec<u8>> {
+        let packet = Self::packet(id, instruction, params);
+        self.serial
+            .clear(serialport::ClearBuffer::Input)
+            .map_err(|e| IoError::Bus(format!("clear Feetech input: {e}")))?;
+        self.serial
+            .write_all(&packet)
+            .map_err(|e| IoError::Bus(format!("write Feetech packet: {e}")))?;
+        self.serial
+            .flush()
+            .map_err(|e| IoError::Bus(format!("flush Feetech packet: {e}")))?;
+
+        let mut header = [0u8; 4];
+        self.serial
+            .read_exact(&mut header)
+            .map_err(|e| IoError::Bus(format!("read Feetech header for id {id}: {e}")))?;
+        if header[0..2] != [0xff, 0xff] || header[2] != id {
+            return Err(IoError::Bus(format!(
+                "invalid Feetech response header for id {id}: {:02x?}",
+                header
+            )));
+        }
+        let length = header[3] as usize;
+        if !(2..=64).contains(&length) {
+            return Err(IoError::Bus(format!(
+                "invalid Feetech response length {length} for id {id}"
+            )));
+        }
+        let mut tail = vec![0u8; length];
+        self.serial
+            .read_exact(&mut tail)
+            .map_err(|e| IoError::Bus(format!("read Feetech response for id {id}: {e}")))?;
+        let mut full = header.to_vec();
+        full.extend_from_slice(&tail);
+        let expected = Self::checksum(&full[2..full.len() - 1]);
+        if *full.last().unwrap() != expected {
+            return Err(IoError::Bus(format!(
+                "invalid Feetech checksum for id {id}"
+            )));
+        }
+        if full[4] != 0 {
+            return Err(IoError::Bus(format!(
+                "Feetech servo {id} returned error 0x{:02x}",
+                full[4]
+            )));
+        }
+        Ok(full[5..full.len() - 1].to_vec())
+    }
+
+    fn read_bytes(&mut self, id: u8, address: u8, length: u8) -> Result<Vec<u8>> {
+        let data = self.transact(id, 0x02, &[address, length])?;
+        if data.len() != length as usize {
+            return Err(IoError::ShortRead {
+                what: "Feetech register read",
+                expected: length as usize,
+                got: data.len(),
+            });
+        }
+        Ok(data)
+    }
+
+    fn write_bytes(&mut self, id: u8, address: u8, data: &[u8]) -> Result<()> {
+        self.transact(id, 0x03, &[std::slice::from_ref(&address), data].concat())?;
+        Ok(())
+    }
+
+    fn read_u16(&mut self, id: u8, address: u8) -> Result<u16> {
+        let data = self.read_bytes(id, address, 2)?;
+        Ok(u16::from_le_bytes([data[0], data[1]]))
+    }
+
+    fn write_u16(&mut self, id: u8, address: u8, value: u16) -> Result<()> {
+        self.write_bytes(id, address, &value.to_le_bytes())
+    }
+
+    fn angle_from_raw(raw: u16) -> f64 {
+        (2.0 * PI * f64::from(raw.min(4095)) / 4096.0) - PI
+    }
+
+    fn raw_from_angle(angle: f64) -> u16 {
+        let normalized = ((angle + PI) / (2.0 * PI)).clamp(0.0, 4095.0 / 4096.0);
+        (normalized * 4096.0).round() as u16
+    }
+
+    pub fn present_positions(&mut self) -> Result<[f64; NUM_JOINTS]> {
+        let mut positions = [0.0; NUM_JOINTS];
+        for (joint, &id) in self.ids.clone().iter().enumerate() {
+            positions[joint] = Self::angle_from_raw(self.read_u16(id, Self::POSITION)?);
+        }
+        Ok(positions)
+    }
+
+    pub fn set_torque(&mut self, on: bool) -> Result<()> {
+        let value = [u8::from(on)];
+        let mut failed = Vec::new();
+        for &id in &self.ids.clone() {
+            if let Err(e) = self.write_bytes(id, Self::TORQUE_ENABLE, &value) {
+                failed.push(format!("torque {on} on {id}: {e}"));
+            }
+        }
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(IoError::Bus(failed.join("; ")))
+        }
+    }
+
+    pub fn interpolate_to(
+        &mut self,
+        target: &[f64; NUM_JOINTS],
+        duration: Duration,
+        step: Duration,
+    ) -> Result<()> {
+        let start = self.present_positions()?;
+        let steps = (duration.as_secs_f64() / step.as_secs_f64())
+            .ceil()
+            .max(1.0) as u32;
+        for i in 1..=steps {
+            let t = i as f64 / steps as f64;
+            let mut next = [0.0; NUM_JOINTS];
+            for j in 0..NUM_JOINTS {
+                next[j] = start[j] + (target[j] - start[j]) * t;
+            }
+            self.write(&JointTargets::new(next))?;
+            std::thread::sleep(step);
+        }
+        Ok(())
+    }
+}
+
+impl RobotIo for FeetechIo {
+    fn read(&mut self) -> Result<Sensors> {
+        let mut sensors = Sensors::default();
+        for (joint, &id) in self.ids.clone().iter().enumerate() {
+            let raw = self.read_u16(id, Self::POSITION)?;
+            sensors.positions[joint] = Self::angle_from_raw(raw);
+        }
+        Ok(sensors)
+    }
+
+    fn write(&mut self, targets: &JointTargets) -> Result<()> {
+        for (joint, &id) in self.ids.clone().iter().enumerate() {
+            self.write_u16(id, Self::GOAL_POSITION, Self::raw_from_angle(targets.positions[joint]))?;
+        }
+        Ok(())
+    }
+
+    fn set_gain(&mut self, _kp: u16) -> Result<()> {
+        // STS/STS3215 gain registers differ from Dynamixel's control table. Do not write an
+        // unverified address; the Feetech backend leaves the servo's configured gain intact.
+        Ok(())
+    }
+
+    fn set_torque(&mut self, on: bool) -> Result<()> {
+        FeetechIo::set_torque(self, on)
+    }
+
+    fn reboot(&mut self, id: u8) -> Result<()> {
+        self.transact(id, 0x08, &[]).map(|_| ())
+    }
+
+    fn slow_sensors(&mut self) -> Result<SlowSensors> {
+        let mut volts = Vec::new();
+        let mut temps_c = [0.0; NUM_JOINTS];
+        for (joint, &id) in self.ids.clone().iter().enumerate() {
+            let voltage = self.read_bytes(id, Self::PRESENT_VOLTAGE, 1)?[0];
+            let temperature = self.read_bytes(id, Self::PRESENT_TEMPERATURE, 1)?[0];
+            volts.push(f64::from(voltage) / 10.0);
+            temps_c[joint] = f64::from(temperature);
+        }
+        if volts.is_empty() {
+            return Err(IoError::ShortRead {
+                what: "Feetech input voltage",
+                expected: 1,
+                got: 0,
+            });
+        }
+        Ok(SlowSensors {
+            volts: volts.iter().sum::<f64>() / volts.len() as f64,
+            temps_c,
+        })
+    }
+
+    fn imu_ready(&self) -> bool {
+        true
+    }
+}
+
+pub enum BusIo {
+    Dynamixel(DynamixelIo),
+    Feetech(FeetechIo),
+}
+
+impl BusIo {
+    pub fn open_dynamixel(port: &str) -> Result<Self> {
+        DynamixelIo::open(port).map(Self::Dynamixel)
+    }
+
+    pub fn open_feetech(port: &str, ids: &[u8]) -> Result<Self> {
+        FeetechIo::open(port, ids).map(Self::Feetech)
+    }
+
+    pub fn check_registers(&mut self) -> Result<usize> {
+        match self {
+            Self::Dynamixel(io) => io.check_registers(),
+            Self::Feetech(_) => Ok(0),
+        }
+    }
+
+    pub fn interpolate_to(
+        &mut self,
+        target: &[f64; NUM_JOINTS],
+        duration: Duration,
+        step: Duration,
+    ) -> Result<()> {
+        match self {
+            Self::Dynamixel(io) => io.interpolate_to(target, duration, step),
+            Self::Feetech(io) => io.interpolate_to(target, duration, step),
+        }
+    }
+}
+
+impl RobotIo for BusIo {
+    fn read(&mut self) -> Result<Sensors> {
+        match self {
+            Self::Dynamixel(io) => io.read(),
+            Self::Feetech(io) => io.read(),
+        }
+    }
+
+    fn write(&mut self, targets: &JointTargets) -> Result<()> {
+        match self {
+            Self::Dynamixel(io) => io.write(targets),
+            Self::Feetech(io) => io.write(targets),
+        }
+    }
+
+    fn set_gain(&mut self, kp: u16) -> Result<()> {
+        match self {
+            Self::Dynamixel(io) => io.set_gain(kp),
+            Self::Feetech(io) => io.set_gain(kp),
+        }
+    }
+
+    fn set_torque(&mut self, on: bool) -> Result<()> {
+        match self {
+            Self::Dynamixel(io) => io.set_torque(on),
+            Self::Feetech(io) => io.set_torque(on),
+        }
+    }
+
+    fn reboot(&mut self, id: u8) -> Result<()> {
+        match self {
+            Self::Dynamixel(io) => io.reboot(id),
+            Self::Feetech(io) => io.reboot(id),
+        }
+    }
+
+    fn slow_sensors(&mut self) -> Result<SlowSensors> {
+        match self {
+            Self::Dynamixel(io) => io.slow_sensors(),
+            Self::Feetech(io) => io.slow_sensors(),
+        }
+    }
+
+    fn imu_stale(&self) -> ImuStale {
+        match self {
+            Self::Dynamixel(io) => io.imu_stale(),
+            Self::Feetech(io) => io.imu_stale(),
+        }
+    }
+
+    fn imu_ready(&self) -> bool {
+        match self {
+            Self::Dynamixel(io) => io.imu_ready(),
+            Self::Feetech(io) => io.imu_ready(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,6 +1040,22 @@ mod tests {
         }
         assert_eq!(t.stale.run, STALE_RUN_WARN);
         assert_eq!(t.stale.total, STALE_RUN_WARN);
+    }
+
+    #[test]
+    fn feetech_packet_checksum_matches_ping_frame() {
+        assert_eq!(
+            FeetechIo::packet(1, 1, &[]),
+            vec![0xff, 0xff, 1, 2, 1, 0xfb]
+        );
+    }
+
+    #[test]
+    fn feetech_angle_conversion_round_trips() {
+        for raw in [0, 1, 1024, 2048, 4095] {
+            let angle = FeetechIo::angle_from_raw(raw);
+            assert_eq!(FeetechIo::raw_from_angle(angle), raw);
+        }
     }
 
     /// Runs accumulate into the same total across separate episodes: the total is "how often

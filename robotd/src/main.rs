@@ -46,7 +46,7 @@ use tokio::net::{UnixListener, UnixStream};
 
 use control::{Controller, Driving, SkillTuning, Tuning};
 use intents::Intents;
-use params::{Mode, Params, Slot};
+use params::{BusProtocol, Mode, Params, Slot};
 
 /// What to do when the shutdown sequence completes. Injected so the tests can observe the
 /// call instead of powering off the machine running them.
@@ -1043,7 +1043,12 @@ fn run_init(params: &Params, duration: Duration) -> ExitCode {
     // The same open as the daemon's, replacement adoption included: `init` is what someone
     // reaches for right after a motor swap, and it must not be the one path that refuses the
     // new servo.
-    let Some(mut io) = open_bus(&params.bus.port, 0) else {
+    let Some(mut io) = open_bus(
+        &params.bus.port,
+        params.bus.protocol,
+        &params.bus.feetech_ids,
+        0,
+    ) else {
         return ExitCode::FAILURE;
     };
     if let Err(e) = io.set_torque(true) {
@@ -1071,6 +1076,23 @@ fn run_init(params: &Params, duration: Duration) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[cfg(target_os = "linux")]
+fn open_configured_bus(bus: &params::Bus) -> duck_control::io::Result<duck_control::bus::BusIo> {
+    open_configured_bus_parts(&bus.port, bus.protocol, &bus.feetech_ids)
+}
+
+#[cfg(target_os = "linux")]
+fn open_configured_bus_parts(
+    port: &str,
+    protocol: BusProtocol,
+    feetech_ids: &[u8],
+) -> duck_control::io::Result<duck_control::bus::BusIo> {
+    match protocol {
+        BusProtocol::DynamixelV2 => duck_control::bus::BusIo::open_dynamixel(port),
+        BusProtocol::FeetechScs => duck_control::bus::BusIo::open_feetech(port, feetech_ids),
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 fn run_init(_params: &Params, _duration: Duration) -> ExitCode {
     tracing::error!("init needs a real bus; this build is not on the robot");
@@ -1094,6 +1116,8 @@ fn spawn_control_thread(
     let fake = args.fake;
     let sim = args.sim.clone();
     let port = params.bus.port.clone();
+    let protocol = params.bus.protocol;
+    let feetech_ids = params.bus.feetech_ids.clone();
     let params = params.clone();
     // So a reload can re-read `[policy]` without a restart. The path rather than the loaded
     // params, because the point is to pick up what has been written since.
@@ -1155,7 +1179,7 @@ fn spawn_control_thread(
             // loop has not completed a cycle yet", forever, whatever happened to the robot
             // afterwards. Retrying the read alone was not enough: execution never got there.
             runtime.block_on(async move {
-                if let Some(io) = open_bus_waiting(&port, &state).await {
+                if let Some(io) = open_bus_waiting(&port, protocol, &feetech_ids, &state).await {
                     control_loop(io, state, intents, params, params_path, period, poweroff).await;
                 }
             });
@@ -1164,7 +1188,7 @@ fn spawn_control_thread(
 
 /// The real bus on the board; a fake elsewhere, so `open_bus_waiting` has one signature.
 #[cfg(target_os = "linux")]
-type BusIo = duck_control::bus::DynamixelIo;
+type BusIo = duck_control::bus::BusIo;
 #[cfg(not(target_os = "linux"))]
 type BusIo = FakeIo;
 
@@ -1175,13 +1199,18 @@ type BusIo = FakeIo;
 /// one to abandon the control loop over.
 ///
 /// Returns `None` only if shutdown is requested while waiting.
-async fn open_bus_waiting(port: &str, state: &RobotState) -> Option<BusIo> {
+async fn open_bus_waiting(
+    port: &str,
+    protocol: BusProtocol,
+    feetech_ids: &[u8],
+    state: &RobotState,
+) -> Option<BusIo> {
     let mut attempt = 0u32;
 
     while !state.shutdown.load(Ordering::Relaxed) {
         // Logging lives in `open_bus`, which is chatty by design on the first attempt and
         // quiet thereafter — a board waiting overnight must not fill the journal.
-        if let Some(io) = open_bus(port, attempt) {
+        if let Some(io) = open_bus(port, protocol, feetech_ids, attempt) {
             state.startup_bus_failures.store(0, Ordering::Relaxed);
             return Some(io);
         }
@@ -1201,11 +1230,16 @@ async fn open_bus_waiting(port: &str, state: &RobotState) -> Option<BusIo> {
 
 /// Open and verify the bus, or explain why not.
 #[cfg(target_os = "linux")]
-fn open_bus(port: &str, attempt: u32) -> Option<BusIo> {
+fn open_bus(
+    port: &str,
+    protocol: BusProtocol,
+    feetech_ids: &[u8],
+    attempt: u32,
+) -> Option<BusIo> {
     // First attempt and every thirtieth — about one line per 30 s while waiting.
     let loud = attempt == 0 || attempt.is_multiple_of(STARTUP_READ_LOG_EVERY);
 
-    let mut io = match duck_control::bus::DynamixelIo::open(port) {
+    let mut io = match open_configured_bus_parts(port, protocol, feetech_ids) {
         Ok(io) => io,
         Err(e) => {
             if loud {
@@ -1296,7 +1330,12 @@ fn adopt_missing_servo(io: &mut BusIo, loud: bool) -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn open_bus(_port: &str, _attempt: u32) -> Option<BusIo> {
+fn open_bus(
+    _port: &str,
+    _protocol: BusProtocol,
+    _feetech_ids: &[u8],
+    _attempt: u32,
+) -> Option<BusIo> {
     tracing::error!("no bus on this platform; use --fake");
     None
 }
@@ -6787,7 +6826,12 @@ mod tests {
         ));
         let waiter_state = Arc::clone(&s);
         let handle = tokio::spawn(async move {
-            open_bus_waiting("/dev/definitely-not-a-bus", &waiter_state)
+            open_bus_waiting(
+                "/dev/definitely-not-a-bus",
+                BusProtocol::DynamixelV2,
+                &[],
+                &waiter_state,
+            )
                 .await
                 .is_none()
         });

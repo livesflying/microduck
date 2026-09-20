@@ -1788,6 +1788,21 @@ pub struct Bus {
     /// Serial port the servos and the IMU board share. The Radxa Zero 3W wires them to
     /// `/dev/ttyS2`.
     pub port: String,
+    /// Wire protocol. The default preserves the original Dynamixel Protocol 2.0 bus.
+    pub protocol: BusProtocol,
+    /// Feetech SCS/STS servo IDs, in the same order as the robot joint table.
+    ///
+    /// Dynamixel uses the built-in IDs and ignores this list. A shorter Feetech list is useful
+    /// for bench bring-up; unlisted joints remain at their last/default sensor values.
+    pub feetech_ids: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BusProtocol {
+    #[default]
+    DynamixelV2,
+    FeetechScs,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1843,6 +1858,8 @@ impl Default for Bus {
     fn default() -> Self {
         Self {
             port: "/dev/ttyS2".into(),
+            protocol: BusProtocol::DynamixelV2,
+            feetech_ids: Vec::new(),
         }
     }
 }

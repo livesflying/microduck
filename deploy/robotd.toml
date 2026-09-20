@@ -20,6 +20,11 @@
 # Zero 3W's wiring; a board wired differently can also be overridden per-invocation with
 # `robotd --port`, which is the dev escape hatch rather than the thing to edit here.
 port = "/dev/ttyS2"
+# Keep the original Dynamixel Protocol 2.0 backend unless this robot is wired with Feetech
+# SCS/STS servos. Feetech boards use a different packet format and control table.
+protocol = "dynamixel_v2"
+# Used only when protocol = "feetech_scs". Empty means the backend uses the built-in joint IDs.
+feetech_ids = []
 
 # Every value below that is commented out shows the built-in default. LEAVE IT COMMENTED
 # unless this robot genuinely needs a different value: install.sh copies this file to
