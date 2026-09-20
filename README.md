@@ -10,7 +10,8 @@
 
 <p align="center">
   <a href="https://pollen-robotics.com/microduck"><b>Get yours here</b></a> ·
-  <a href="docs/robot/cheatsheet.md">Cheat sheet</a> ·
+  <a href="README_zh.md">中文文档</a> ·
+  <a href="docs/robot/cheatsheet_zh.md">Cheat sheet</a> ·
   <a href="https://github.com/pollen-robotics/microduck_rl">Training the policies</a> ·
   <a href="docs/design/architecture.md">How it works</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -71,9 +72,9 @@ It also sits, kicks a ball, rolls forward on command, and quacks in a voice that
 
 | | |
 |---|---|
-| [Cheat sheet](docs/robot/cheatsheet.md) | Every `robotctl` command: drive, configure, voice, chorale, theremin, wifi, updates, logs. Start here. |
-| [Gamepad](docs/robot/cheatsheet.md#gamepad-configd) | The full button mapping, and pairing a pad — [once per pad](docs/robot/pair-a-gamepad.md), plus what to do when it will not bond. |
-| [`duckctl`](docs/robot/duckctl.md) | The robot from a laptop over Bluetooth, with no network and no ssh. |
+| [Cheat sheet](docs/robot/cheatsheet_zh.md) | Every `robotctl` command: drive, configure, voice, chorale, theremin, wifi, updates, logs. Start here. |
+| [Gamepad](docs/robot/cheatsheet_zh.md#gamepad-configd) | The full button mapping, and pairing a pad — [once per pad](docs/robot/pair-a-gamepad_zh.md), plus what to do when it will not bond. |
+| [`duckctl`](docs/robot/duckctl_zh.md) | The robot from a laptop over Bluetooth, with no network and no ssh. |
 | [Updates](docs/robot/cheatsheet.md#updates-updaterd) | Install, roll back, pin. Every update is verified, health-gated and reversible. |
 
 ### You are building on it
@@ -81,13 +82,13 @@ It also sits, kicks a ball, rolls forward on command, and quacks in a voice that
 | | |
 |---|---|
 | [microduck_rl](https://github.com/pollen-robotics/microduck_rl) | Where the policies come from: MuJoCo, PPO, domain randomisation, and the ONNX export this repo loads. |
-| [How it works](docs/design/architecture.md) | The whole system on one page — the daemons, the bus, how an update reaches a robot — then a page per part. |
-| [Set up a dev board](docs/robot/install-dev.md) | From a blank board to a robot that takes branch builds. |
-| [Dev cheat sheet](docs/robot/cheatsheet-dev.md) | Branch builds, release candidates, driving from a laptop, and the restart traps after an update. |
-| [Push your branch](docs/robot/dev-push.md) | Build on your machine, install over ssh, about a minute. |
+| [How it works](docs/design/architecture_zh.md) | The whole system on one page — the daemons, the bus, how an update reaches a robot — then a page per part. |
+| [Set up a dev board](docs/robot/install-dev_zh.md) | From a blank board to a robot that takes branch builds. |
+| [Dev cheat sheet](docs/robot/cheatsheet-dev_zh.md) | Branch builds, release candidates, driving from a laptop, and the restart traps after an update. |
+| [Push your branch](docs/robot/dev-push_zh.md) | Build on your machine, install over ssh, about a minute. |
 | [The simulated duck](docs/robot/simulation.md) | No robot on the desk? `scripts/duck-sim` runs the real daemons against a body in MuJoCo — one duck in a window, or four as machines you log into. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Building, testing, layout, conventions, releasing. |
-| [Docs index](docs/README.md) | Everything, including the design pages and the open problems. |
+| [Docs index](docs/README_zh.md) | Everything, including the design pages and the open problems. |
 
 ## Under the hood
 
