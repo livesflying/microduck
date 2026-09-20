@@ -872,6 +872,22 @@ impl BusIo {
         }
     }
 
+    /// Replacement adoption is a Dynamixel-specific startup feature. Feetech IDs are explicit
+    /// configuration, so the census must not probe or rewrite them.
+    pub fn missing_servos(&mut self) -> Result<Vec<u8>> {
+        match self {
+            Self::Dynamixel(io) => io.missing_servos(),
+            Self::Feetech(_) => Ok(Vec::new()),
+        }
+    }
+
+    pub fn adopt_replacement(&mut self, id: u8) -> Result<bool> {
+        match self {
+            Self::Dynamixel(io) => io.adopt_replacement(id),
+            Self::Feetech(_) => Ok(false),
+        }
+    }
+
     pub fn interpolate_to(
         &mut self,
         target: &[f64; NUM_JOINTS],
