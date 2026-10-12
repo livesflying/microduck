@@ -30,8 +30,11 @@ const _: () = assert!(JOINT_NAMES.len() == NUM_JOINTS);
 /// than an off-by-one someone has to rediscover.
 pub const MOUTH_INDEX: usize = 9;
 
-/// Home pose. The trunk sits ~5 mm further forward than the v1.5 pose so the CoM is over
-/// the ankle axis; the old pose biased the robot backwards.
+/// Home pose used by the installed HD1910 walk policy.
+///
+/// The order is the existing 15-joint order. The policy observes the 14 non-mouth joints
+/// relative to this pose, so these values must match the model's `default_joint_pos`
+/// metadata. Servo IDs and the Feetech direction/zero mapping remain separate.
 ///
 /// Must match `HOME_FRAME` in the training env — a policy is trained against these angles
 /// and observes joint positions *relative* to them, so a discrepancy here is a constant
@@ -39,9 +42,9 @@ pub const MOUTH_INDEX: usize = 9;
 pub const DEFAULT_POSITION: [f64; NUM_JOINTS] = [
     0.0,     // left_hip_yaw
     -0.0873, // left_hip_roll
-    -0.4579, // left_hip_pitch
-    -0.0049, // left_knee
-    0.4530,  // left_ankle
+    -0.3490, // left_hip_pitch
+    -0.0050, // left_knee
+    0.3490,  // left_ankle
     0.3491,  // neck_pitch
     0.3491,  // head_pitch
     0.0,     // head_yaw
@@ -49,9 +52,9 @@ pub const DEFAULT_POSITION: [f64; NUM_JOINTS] = [
     0.0,     // mouth
     0.0,     // right_hip_yaw
     0.0873,  // right_hip_roll
-    0.4579,  // right_hip_pitch
-    0.0049,  // right_knee
-    -0.4530, // right_ankle
+    0.3490,  // right_hip_pitch
+    0.0050,  // right_knee
+    -0.3490, // right_ankle
 ];
 
 /// Mouth travel, radians: closed and fully open. The alpha reuses the v1.6 range,

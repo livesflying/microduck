@@ -46,7 +46,7 @@ use tokio::net::{UnixListener, UnixStream};
 
 use control::{Controller, Driving, SkillTuning, Tuning};
 use intents::Intents;
-use params::{BusProtocol, Mode, Params, Slot};
+use params::{BusProtocol, ImuSource, Mode, Params, Slot};
 
 /// What to do when the shutdown sequence completes. Injected so the tests can observe the
 /// call instead of powering off the machine running them.
@@ -1047,6 +1047,11 @@ fn run_init(params: &Params, duration: Duration) -> ExitCode {
         &params.bus.port,
         params.bus.protocol,
         &params.bus.feetech_ids,
+        &params.bus.feetech_zero_ticks,
+        &params.bus.feetech_directions,
+        params.bus.imu,
+        params.bus.imu_i2c_bus,
+        params.bus.imu_i2c_address,
         0,
     ) else {
         return ExitCode::FAILURE;
@@ -1081,10 +1086,32 @@ fn open_configured_bus_parts(
     port: &str,
     protocol: BusProtocol,
     feetech_ids: &[u8],
+    feetech_zero_ticks: &[i32],
+    feetech_directions: &[i32],
+    imu_source: ImuSource,
+    imu_i2c_bus: u8,
+    imu_i2c_address: u16,
 ) -> duck_control::io::Result<duck_control::bus::BusIo> {
     match protocol {
         BusProtocol::DynamixelV2 => duck_control::bus::BusIo::open_dynamixel(port),
-        BusProtocol::FeetechScs => duck_control::bus::BusIo::open_feetech(port, feetech_ids),
+        BusProtocol::FeetechScs => {
+            let imu = match imu_source {
+                ImuSource::None => None,
+                ImuSource::I2cLsm6dsv16x => Some(duck_control::i2c_imu::I2cImu::open(
+                    duck_control::i2c_imu::I2cImuConfig {
+                        bus: imu_i2c_bus,
+                        address: imu_i2c_address,
+                    },
+                )?),
+            };
+            duck_control::bus::BusIo::open_feetech(
+                port,
+                feetech_ids,
+                feetech_zero_ticks,
+                feetech_directions,
+                imu,
+            )
+        }
     }
 }
 
@@ -1113,6 +1140,11 @@ fn spawn_control_thread(
     let port = params.bus.port.clone();
     let protocol = params.bus.protocol;
     let feetech_ids = params.bus.feetech_ids.clone();
+    let feetech_zero_ticks = params.bus.feetech_zero_ticks.clone();
+    let feetech_directions = params.bus.feetech_directions.clone();
+    let imu_source = params.bus.imu;
+    let imu_i2c_bus = params.bus.imu_i2c_bus;
+    let imu_i2c_address = params.bus.imu_i2c_address;
     let params = params.clone();
     // So a reload can re-read `[policy]` without a restart. The path rather than the loaded
     // params, because the point is to pick up what has been written since.
@@ -1174,7 +1206,19 @@ fn spawn_control_thread(
             // loop has not completed a cycle yet", forever, whatever happened to the robot
             // afterwards. Retrying the read alone was not enough: execution never got there.
             runtime.block_on(async move {
-                if let Some(io) = open_bus_waiting(&port, protocol, &feetech_ids, &state).await {
+                if let Some(io) = open_bus_waiting(
+                    &port,
+                    protocol,
+                    &feetech_ids,
+                    &feetech_zero_ticks,
+                    &feetech_directions,
+                    imu_source,
+                    imu_i2c_bus,
+                    imu_i2c_address,
+                    &state,
+                )
+                .await
+                {
                     control_loop(io, state, intents, params, params_path, period, poweroff).await;
                 }
             });
@@ -1198,6 +1242,11 @@ async fn open_bus_waiting(
     port: &str,
     protocol: BusProtocol,
     feetech_ids: &[u8],
+    feetech_zero_ticks: &[i32],
+    feetech_directions: &[i32],
+    imu_source: ImuSource,
+    imu_i2c_bus: u8,
+    imu_i2c_address: u16,
     state: &RobotState,
 ) -> Option<BusIo> {
     let mut attempt = 0u32;
@@ -1205,7 +1254,17 @@ async fn open_bus_waiting(
     while !state.shutdown.load(Ordering::Relaxed) {
         // Logging lives in `open_bus`, which is chatty by design on the first attempt and
         // quiet thereafter — a board waiting overnight must not fill the journal.
-        if let Some(io) = open_bus(port, protocol, feetech_ids, attempt) {
+        if let Some(io) = open_bus(
+            port,
+            protocol,
+            feetech_ids,
+            feetech_zero_ticks,
+            feetech_directions,
+            imu_source,
+            imu_i2c_bus,
+            imu_i2c_address,
+            attempt,
+        ) {
             state.startup_bus_failures.store(0, Ordering::Relaxed);
             return Some(io);
         }
@@ -1229,12 +1288,26 @@ fn open_bus(
     port: &str,
     protocol: BusProtocol,
     feetech_ids: &[u8],
+    feetech_zero_ticks: &[i32],
+    feetech_directions: &[i32],
+    imu_source: ImuSource,
+    imu_i2c_bus: u8,
+    imu_i2c_address: u16,
     attempt: u32,
 ) -> Option<BusIo> {
     // First attempt and every thirtieth — about one line per 30 s while waiting.
     let loud = attempt == 0 || attempt.is_multiple_of(STARTUP_READ_LOG_EVERY);
 
-    let mut io = match open_configured_bus_parts(port, protocol, feetech_ids) {
+    let mut io = match open_configured_bus_parts(
+        port,
+        protocol,
+        feetech_ids,
+        feetech_zero_ticks,
+        feetech_directions,
+        imu_source,
+        imu_i2c_bus,
+        imu_i2c_address,
+    ) {
         Ok(io) => io,
         Err(e) => {
             if loud {
@@ -1329,6 +1402,11 @@ fn open_bus(
     _port: &str,
     _protocol: BusProtocol,
     _feetech_ids: &[u8],
+    _feetech_zero_ticks: &[i32],
+    _feetech_directions: &[i32],
+    _imu_source: ImuSource,
+    _imu_i2c_bus: u8,
+    _imu_i2c_address: u16,
     _attempt: u32,
 ) -> Option<BusIo> {
     tracing::error!("no bus on this platform; use --fake");
@@ -3097,9 +3175,14 @@ async fn control_loop<T: RobotIo>(
                 duck_control::model::mouth_target(snapshot.mouth);
         }
 
-        match safety.apply(targets, hold, gain) {
-            Ok(applied) => limits.extend(applied.limits),
-            Err(e) => tracing::warn!(error = %e, "bus write failed"),
+        // Limp is read-only. A daemon restart, a failed init, or a robot waiting for a human
+        // command must not write gains or goal positions; some servo boards latch the last goal
+        // even while torque is off, so "it cannot move yet" is not a good enough boundary.
+        if bringup != Bringup::Limp {
+            match safety.apply(targets, hold, gain) {
+                Ok(applied) => limits.extend(applied.limits),
+                Err(e) => tracing::warn!(error = %e, "bus write failed"),
+            }
         }
 
         // Only assemble a frame when somebody is subscribed. On a robot nobody usually is,
@@ -6398,7 +6481,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let mut io = io;
             control_loop_probe(&mut io, loop_state, Duration::from_millis(2)).await;
-            tx.send(io.last_written).unwrap();
+            tx.send((io.reads, io.writes, io.last_written)).unwrap();
         });
 
         while s.ticks.load(Ordering::Relaxed) < 5 {
@@ -6407,11 +6490,10 @@ mod tests {
         s.shutdown.store(true, Ordering::Relaxed);
         handle.await.unwrap();
 
-        let written = rx.recv().unwrap().expect("the loop must command something");
-        assert_eq!(
-            written.positions, resting,
-            "the loop moved the robot instead of holding where it found it"
-        );
+        let (reads, writes, written) = rx.recv().unwrap();
+        assert!(reads > 0, "the loop did not read the startup pose");
+        assert_eq!(writes, 0, "startup wrote {writes} target frames");
+        assert_eq!(written, None, "startup must not command any target");
     }
 
     /// **The policy-failure contract.** A policy that cannot load must not stop the robot
@@ -6624,7 +6706,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let mut io = io;
             control_loop_probe(&mut io, loop_state, Duration::from_millis(2)).await;
-            tx.send(io.last_written).unwrap();
+            tx.send((io.reads, io.writes, io.last_written)).unwrap();
         });
 
         // Bounded, so a regression fails the test instead of hanging CI forever.
@@ -6642,10 +6724,21 @@ mod tests {
         s.shutdown.store(true, Ordering::Relaxed);
         handle.await.unwrap();
 
-        // And it still adopted the pose it found rather than the home pose — waiting must
-        // not cost the startup invariant.
-        let written = rx.recv().unwrap().expect("the loop must command something");
-        assert_eq!(written.positions, resting);
+        // And it still stayed read-only after the bus came back. Waiting must not cost the
+        // startup invariant.
+        let (reads, writes, written) = rx.recv().unwrap();
+        assert!(
+            reads >= 3,
+            "the loop did not continue reading after failures"
+        );
+        assert_eq!(
+            writes, 0,
+            "startup after bus recovery wrote {writes} target frames"
+        );
+        assert_eq!(
+            written, None,
+            "startup after bus recovery commanded a target"
+        );
     }
 
     /// **The invariant the battery field lives or dies by.** A flat pack must be reported and
@@ -6825,10 +6918,15 @@ mod tests {
                 "/dev/definitely-not-a-bus",
                 BusProtocol::DynamixelV2,
                 &[],
+                &[],
+                &[],
+                ImuSource::None,
+                4,
+                0x6a,
                 &waiter_state,
             )
-                .await
-                .is_none()
+            .await
+            .is_none()
         });
 
         // Bounded, so a regression fails rather than hanging CI.
@@ -7971,7 +8069,8 @@ mod tests {
         let handle = tokio::spawn(async move {
             let mut io = io;
             control_loop_probe(&mut io, loop_state, Duration::from_millis(2)).await;
-            tx.send((io.torque, io.torque_writes)).unwrap();
+            tx.send((io.torque, io.torque_writes, io.writes, io.last_gain))
+                .unwrap();
         });
 
         while s.ticks.load(Ordering::Relaxed) < 5 {
@@ -7980,9 +8079,14 @@ mod tests {
         s.shutdown.store(true, Ordering::Relaxed);
         handle.await.unwrap();
 
-        let (torque, writes) = rx.recv().unwrap();
+        let (torque, writes, target_writes, gain) = rx.recv().unwrap();
         assert_eq!(torque, None, "the loop powered the joints on its own");
         assert_eq!(writes, 0, "torque was written {writes} times at startup");
+        assert_eq!(
+            target_writes, 0,
+            "read-only startup wrote {target_writes} target frames"
+        );
+        assert_eq!(gain, None, "read-only startup wrote a gain");
         assert!(!s.homed.load(Ordering::Relaxed));
     }
 
@@ -8013,7 +8117,7 @@ mod tests {
             let mut io = io;
             control_loop_probe_with(&mut io, loop_state, loop_intents, Duration::from_millis(2))
                 .await;
-            tx.send(io.torque).unwrap();
+            tx.send((io.torque, io.writes, io.last_gain)).unwrap();
         });
 
         while s.ticks.load(Ordering::Relaxed) < 5 {
@@ -8022,7 +8126,97 @@ mod tests {
         s.shutdown.store(true, Ordering::Relaxed);
         handle.await.unwrap();
 
-        assert_eq!(rx.recv().unwrap(), None, "powered up with no policy to run");
+        let (torque, target_writes, gain) = rx.recv().unwrap();
+        assert_eq!(torque, None, "powered up with no policy to run");
+        assert_eq!(
+            target_writes, 0,
+            "enable with no policy wrote target frames"
+        );
+        assert_eq!(gain, None, "enable with no policy wrote a gain");
+        assert!(!s.homed.load(Ordering::Relaxed));
+    }
+
+    /// If init cannot enable torque, the daemon keeps reading and reporting state, but it must not
+    /// start writing goals in the hope that a later torque write succeeds.
+    #[tokio::test]
+    async fn failed_init_stays_read_only_and_unhomed() {
+        struct TorqueFailIo {
+            inner: FakeIo,
+            torque_attempts: usize,
+        }
+
+        impl RobotIo for TorqueFailIo {
+            fn read(&mut self) -> duck_control::io::Result<duck_control::Sensors> {
+                self.inner.read()
+            }
+
+            fn write(
+                &mut self,
+                targets: &duck_control::JointTargets,
+            ) -> duck_control::io::Result<()> {
+                self.inner.write(targets)
+            }
+
+            fn set_gain(&mut self, kp: u16) -> duck_control::io::Result<()> {
+                self.inner.set_gain(kp)
+            }
+
+            fn set_torque(&mut self, _on: bool) -> duck_control::io::Result<()> {
+                self.torque_attempts += 1;
+                Err(duck_control::io::IoError::Simulated)
+            }
+
+            fn reboot(&mut self, id: u8) -> duck_control::io::Result<()> {
+                self.inner.reboot(id)
+            }
+
+            fn slow_sensors(&mut self) -> duck_control::io::Result<duck_control::SlowSensors> {
+                self.inner.slow_sensors()
+            }
+        }
+
+        let io = TorqueFailIo {
+            inner: FakeIo::at(DEFAULT_POSITION).frozen(),
+            torque_attempts: 0,
+        };
+        let mut params = Params::default();
+        params.policy.enabled = false;
+        let s = Arc::new(RobotState::new(
+            &params,
+            std::path::Path::new("/test/robotd.toml"),
+            false,
+            false,
+        ));
+        let intents = Arc::new(Intents::new());
+        intents.request_init();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let loop_state = Arc::clone(&s);
+        let loop_intents = Arc::clone(&intents);
+        let handle = tokio::spawn(async move {
+            let mut io = io;
+            control_loop_probe_with(&mut io, loop_state, loop_intents, Duration::from_millis(2))
+                .await;
+            tx.send((
+                io.torque_attempts,
+                io.inner.reads,
+                io.inner.writes,
+                io.inner.last_gain,
+            ))
+            .unwrap();
+        });
+
+        while s.ticks.load(Ordering::Relaxed) < 5 {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        s.shutdown.store(true, Ordering::Relaxed);
+        handle.await.unwrap();
+
+        let (torque_attempts, reads, target_writes, gain) = rx.recv().unwrap();
+        assert_eq!(torque_attempts, 1, "init should try torque once");
+        assert!(reads > 0, "the loop stopped reading after init failed");
+        assert_eq!(target_writes, 0, "failed init wrote target frames");
+        assert_eq!(gain, None, "failed init wrote a gain");
         assert!(!s.homed.load(Ordering::Relaxed));
     }
 

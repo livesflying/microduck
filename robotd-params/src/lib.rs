@@ -1795,6 +1795,26 @@ pub struct Bus {
     /// Dynamixel uses the built-in IDs and ignores this list. A shorter Feetech list is useful
     /// for bench bring-up; unlisted joints remain at their last/default sensor values.
     pub feetech_ids: Vec<u8>,
+    /// Optional Feetech encoder zero ticks, in joint order. Empty preserves the built-in
+    /// temporary mirror mapping.
+    pub feetech_zero_ticks: Vec<i32>,
+    /// Optional Feetech joint directions, in joint order. Each entry must be -1 or 1.
+    /// Empty preserves the built-in temporary mirror mapping.
+    pub feetech_directions: Vec<i32>,
+    /// Optional IMU source for a bus without the original `imu_to_dxl` board.
+    pub imu: ImuSource,
+    /// Linux I2C adapter used when `imu = "i2c_lsm6dsv16x"`.
+    pub imu_i2c_bus: u8,
+    /// 7-bit I2C address, normally 0x6a when SA0/SDO is tied low.
+    pub imu_i2c_address: u16,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImuSource {
+    #[default]
+    None,
+    I2cLsm6dsv16x,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1860,6 +1880,11 @@ impl Default for Bus {
             port: "/dev/ttyS2".into(),
             protocol: BusProtocol::DynamixelV2,
             feetech_ids: Vec::new(),
+            feetech_zero_ticks: Vec::new(),
+            feetech_directions: Vec::new(),
+            imu: ImuSource::None,
+            imu_i2c_bus: 4,
+            imu_i2c_address: 0x6a,
         }
     }
 }

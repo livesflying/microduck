@@ -21,6 +21,7 @@ docs give the reasoning and point at it.
 | [`dev-push_zh.md`](robot/dev-push_zh.md) | Build on your machine and install on the board over ssh, with no CI run. |
 | [`simulation.md`](robot/simulation.md) | The simulated duck: `scripts/duck-sim`, the real daemons against a MuJoCo body, one duck or several in containers. |
 | [`duckctl.md`](robot/duckctl.md) | Every `duckctl` command — the robot from a laptop, over Bluetooth. |
+| [`assembly-install_zh.md`](robot/assembly-install_zh.md) | Servo IDs, home-pose values, horn alignment, and assembly acceptance checks. |
 | [`install-dev.md`](robot/install-dev.md) | Setting up a board for development, from nothing. |
 | [`install-by-hand.md`](robot/install-by-hand.md) | The same install as separate commands, for testing one step at a time. |
 

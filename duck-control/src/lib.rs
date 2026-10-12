@@ -9,6 +9,9 @@
 
 pub mod bus;
 pub mod fall;
+pub mod feetech;
+#[cfg(target_os = "linux")]
+pub mod i2c_imu;
 pub mod imu;
 pub mod io;
 pub mod model;

@@ -1,0 +1,55 @@
+# microduck-app-server — LAN app bridge for phone controls.
+#
+# Install to /etc/systemd/system/microduck-app-server.service.
+
+[Unit]
+Description=MicroDuck phone app control bridge
+Documentation=file:///opt/robot/daemon/current/docs/design/mobile-app.md
+
+# robotd is the authority for all motion. Starting before it only means the bridge reconnects;
+# robotd being down should not keep the LAN discovery endpoint from answering.
+After=robotd.service network.target local-fs.target
+Wants=robotd.service
+
+[Service]
+Type=exec
+ExecStart=/opt/robot/daemon/current/bin/microduck-app-server
+
+# The bridge needs only the robotd unix socket and a LAN TCP/UDP listener. It is intentionally not
+# a hardware process.
+User=microduck-app
+Group=microduck-app
+SupplementaryGroups=robot
+
+Restart=always
+RestartSec=5s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+
+# Open LAN control is deliberate for the existing phone app path. Put
+# MICRODUCK_APP_TOKEN in a systemd drop-in before using this on an untrusted network.
+Environment=RUST_LOG=info
+Environment=MICRODUCK_ROBOTD_SOCKET=/run/robotd.sock
+Environment=MICRODUCK_APP_BIND=0.0.0.0:38880
+Environment=MICRODUCK_APP_ALLOW_OPEN_LAN=1
+StandardOutput=journal
+StandardError=journal
+RuntimeDirectory=microduck-app-server
+
+[Install]
+WantedBy=multi-user.target

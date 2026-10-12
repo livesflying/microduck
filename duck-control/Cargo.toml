@@ -18,6 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror.workspace = true
 tracing.workspace = true
+libc = "0.2"
 # `load-dynamic` dlopens libonnxruntime at first use instead of linking it. Two
 # consequences, both wanted: the aarch64 cross-build needs no target-arch ONNX Runtime at
 # build time, and a laptop with no libonnxruntime still compiles and runs every test that

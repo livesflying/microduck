@@ -112,6 +112,31 @@ pub const REGISTRY: &[Entry] = &[
         Kind::IntegerList,
         "Feetech IDs in joint order; empty uses the built-in Dynamixel joint IDs",
     ),
+    entry(
+        "bus.feetech_zero_ticks",
+        Kind::IntegerList,
+        "Feetech encoder zero ticks in joint order; empty uses the temporary mirror mapping",
+    ),
+    entry(
+        "bus.feetech_directions",
+        Kind::IntegerList,
+        "Feetech joint directions in joint order, each -1 or 1",
+    ),
+    entry(
+        "bus.imu",
+        Kind::Choice(&["none", "i2c_lsm6dsv16x"]),
+        "Optional IMU source; none preserves the original bus behavior",
+    ),
+    entry(
+        "bus.imu_i2c_bus",
+        Kind::Integer,
+        "I2C adapter number for the optional IMU",
+    ),
+    entry(
+        "bus.imu_i2c_address",
+        Kind::Integer,
+        "7-bit I2C address for the optional IMU",
+    ),
     // ── [control] ────────────────────────────────────────────────────────────
     entry("control.hz", Kind::Integer, "Control loop rate"),
     entry(

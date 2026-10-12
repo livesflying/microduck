@@ -342,6 +342,8 @@ cp "$BIN"/robotd staged/
 cp "$BIN"/configd staged/
 cp "$BIN"/btd staged/
 cp "$BIN"/padd staged/
+# The LAN app bridge for phone controls on port 38880.
+cp "$BIN"/microduck-app-server staged/
 # The WebRTC gateway. Its unit ships with an `[Install]` section, so postinstall enables and starts
 # it and `on_apply` restarts it, exactly as for every other daemon here.
 cp "$BIN"/mediad staged/
@@ -389,6 +391,8 @@ cargo run -p xtask -- package \
     --include "btd/systemd/sysusers.d/btd.conf=systemd/sysusers.d/btd.conf" \
     --include "padd/systemd/padd.service=systemd/padd.service" \
     --include "padd/systemd/sysusers.d/padd.conf=systemd/sysusers.d/padd.conf" \
+    --include "microduck_app/backend/systemd/microduck-app-server.service=systemd/microduck-app-server.service" \
+    --include "microduck_app/backend/systemd/sysusers.d/microduck-app-server.conf=systemd/sysusers.d/microduck-app-server.conf" \
     --include "mediad/systemd/mediad.service=systemd/mediad.service" \
     --include "mediad/systemd/sysusers.d/mediad.conf=systemd/sysusers.d/mediad.conf" \
     --include "tof/systemd/tofd.service=systemd/tofd.service" \
