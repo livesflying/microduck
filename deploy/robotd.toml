@@ -25,10 +25,11 @@ port = "/dev/ttyS2"
 protocol = "dynamixel_v2"
 # Used only when protocol = "feetech_scs". Empty means the backend uses the built-in joint IDs.
 feetech_ids = []
-# Optional HD1910M encoder zero ticks and directions, in joint order. Leave both empty to keep
-# the temporary built-in mirror mapping; fill both after mechanical calibration.
-feetech_zero_ticks = []
-feetech_directions = []
+# HD1910M encoder mapping for the current 15-joint installation. The two neck pitch
+# axes are mounted opposite to the leg/head-yaw axes, so they use +1 while the other
+# joints use -1 in the software joint convention.
+feetech_zero_ticks = [2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048, 2048]
+feetech_directions = [-1, -1, -1, -1, -1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1]
 # Optional I2C IMU. Leave this as "none" to preserve the original imu_to_dxl path.
 imu = "none"
 imu_i2c_bus = 4
